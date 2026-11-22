@@ -18,7 +18,7 @@ application:
     - ontology
     - kgx
 # Sized for Hetionet (92k nodes, 2.3M edges, a 397 MB view): a synthetic graph that size
-# takes under 2 s and peaks under 820 MiB at 1 vCPU (README, "Scale").
+# takes under 2 s and peaks under 830 MiB at 1 vCPU (README, "Scale").
 runtime:
   cpu: 1024
   memory: 2048

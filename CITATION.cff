@@ -96,6 +96,7 @@ references:
   end: 1855
   year: 2022
   doi: 10.1111/cts.13302
+# Crossref has the title as "DuckDB" and the subtitle "an Embeddable Analytical Database".
 - type: conference-paper
   title: "DuckDB: an Embeddable Analytical Database"
   authors:

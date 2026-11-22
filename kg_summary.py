@@ -142,17 +142,69 @@ def find_files(graph_dir: str) -> dict:
     raise GraphError(f"no node and edge files in {graph_dir}: expected nodes.parquet and edges.parquet, or nodes.tsv.gz and edges.tsv.gz")
 
 
-def read_graph_json(graph_dir: str) -> dict | None:
+def read_graph_json(graph_dir: str) -> tuple[dict | None, list[str]]:
+    """graph.json (None when there is none) with only the fields this app uses, each of
+    the type it should be, and what was wrong with it: a field of the wrong type is left
+    out and named, so a malformed graph.json never fails the run."""
     path = os.path.join(graph_dir, "graph.json")
     if not os.path.isfile(path):
-        return None
+        return None, []
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, ValueError) as e:
         log(f"graph.json can't be read: {e}")
-        return {"error": str(e)[:300]}
-    return doc if isinstance(doc, dict) else {"error": "graph.json is not an object"}
+        return {}, [f"not valid JSON: {str(e)[:200]}"]
+    if not isinstance(doc, dict):
+        return {}, ["not a JSON object"]
+
+    problems = []
+    clean = {}
+
+    def is_int(v) -> bool:
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    def is_str_list(v) -> bool:
+        return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+    for key in ("layout_version", "biolink", "biolink_version", "generated_at"):
+        if key in doc:
+            if isinstance(doc[key], str):
+                clean[key] = doc[key]
+            else:
+                problems.append(f"{key} is not a string")
+    for key, ok, what in (("prefixes", lambda v: isinstance(v, dict), "an object"),
+                          ("source", lambda v: isinstance(v, dict), "an object"),
+                          ("unresolved_prefixes", is_str_list, "a list of strings")):
+        if key in doc:
+            if ok(doc[key]):
+                clean[key] = doc[key]
+            else:
+                problems.append(f"{key} is not {what}")
+    if "counts" in doc:
+        counts = doc["counts"]
+        if not isinstance(counts, dict):
+            problems.append("counts is not an object")
+        else:
+            clean["counts"] = {}
+            for key in ("nodes", "edges", "dropped_edges"):
+                if key in counts:
+                    if is_int(counts[key]) and counts[key] >= 0:
+                        clean["counts"][key] = counts[key]
+                    else:
+                        problems.append(f"counts.{key} is not a count")
+    if "models" in doc:
+        if not isinstance(doc["models"], list):
+            problems.append("models is not a list")
+        else:
+            clean["models"] = []
+            for i, m in enumerate(doc["models"]):
+                if (isinstance(m, dict) and isinstance(m.get("name"), str) and is_int(m.get("version", 0))
+                        and isinstance(m.get("name_property", ""), str) and is_str_list(m.get("name_from", []))):
+                    clean["models"].append(m)
+                else:
+                    problems.append(f"models[{i}] is malformed")
+    return clean, problems
 
 
 def source(files: dict, kind: str) -> str:
@@ -202,8 +254,12 @@ def open_graph(con, files: dict) -> dict:
 def load(con) -> None:
     """Materialise the graph once, compactly:
 
-    node(idx, id, category, primary, name, copies): one row per distinct id, idx 0..n-1;
-      primary is the first category, used wherever a node needs one category.
+    node_row(id, category, name): the node file's rows, in file order (rowid).
+    node(idx, id, category, primary_category, name, copies): one row per distinct id,
+      idx 0..n-1, its category and name from its first row. primary_category is the one
+      category a node is counted under everywhere: a record's (pennsieve:...) pennsieve:
+      category, its model, even when a Biolink class comes first; any other node's first
+      category.
     edge(s, o, predicate, prop, id_hash, missing_subject, missing_object): endpoints as
       node indexes (NULL when the node isn't in the node file; the id is then kept), and
       a hash of the edge id to find duplicate ids without keeping the ids.
@@ -211,11 +267,18 @@ def load(con) -> None:
     The edge file is read once here (a TSV is decompressed and parsed only once), except
     to list examples of a problem found.
     """
-    con.execute("""CREATE TABLE node AS
+    # Scanned in file order, so rowid is the row's place in the file.
+    con.execute("SET preserve_insertion_order = true")
+    con.execute("CREATE TABLE node_row AS SELECT * FROM nodes_src")
+    con.execute("SET preserve_insertion_order = false")
+    rec = sql_string(RECORD_PREFIX)
+    con.execute(f"""CREATE TABLE node AS
         SELECT (row_number() OVER (ORDER BY id) - 1)::INTEGER AS idx, id, category,
-               coalesce(category[1], '(none)') AS primary_category, name, copies
-        FROM (SELECT id, first(category) AS category, first(name) AS name, count(*) AS copies
-              FROM nodes_src WHERE coalesce(id, '') <> '' GROUP BY id)""")
+               coalesce(CASE WHEN starts_with(id, {rec}) THEN list_filter(category, lambda c: starts_with(c, {rec}))[1] END,
+                        category[1], {sql_string(NO_CATEGORY)}) AS primary_category,
+               name, copies
+        FROM (SELECT id, arg_min(category, rowid) AS category, arg_min(name, rowid) AS name, count(*) AS copies
+              FROM node_row WHERE coalesce(id, '') <> '' GROUP BY id)""")
     con.execute("""CREATE TABLE edge AS
         SELECT s.idx AS s, o.idx AS o, e.predicate, e.prop, hash(nullif(e.id, '')) AS id_hash,
                CASE WHEN s.idx IS NULL THEN coalesce(e.subject, '') END AS missing_subject,
@@ -231,10 +294,9 @@ def load(con) -> None:
 def size_section(con, graph_json: dict | None) -> dict:
     nodes = scalar(con, "SELECT count(*) FROM node")
     records = scalar(con, f"SELECT count(*) FROM node WHERE starts_with(id, {sql_string(RECORD_PREFIX)})")
-    # A node with several categories counts under each, as KGX summaries count them.
-    by_category = rows(con, f"""SELECT coalesce(c, {sql_string(NO_CATEGORY)}) AS category, count(*) AS nodes
-        FROM (SELECT unnest(CASE WHEN len(coalesce(category, [])) = 0 THEN [NULL] ELSE category END) AS c FROM node)
-        GROUP BY 1 ORDER BY nodes DESC, category""")
+    # By primary category (see load), as every other section counts nodes.
+    by_category = rows(con, """SELECT primary_category AS category, count(*) AS nodes
+        FROM node GROUP BY 1 ORDER BY nodes DESC, category""")
     by_predicate = rows(con, """SELECT coalesce(predicate, '(none)') AS predicate, count(*) AS edges
         FROM edge GROUP BY 1 ORDER BY edges DESC, predicate""")
     counts = (graph_json or {}).get("counts") or {}
@@ -247,7 +309,7 @@ def size_section(con, graph_json: dict | None) -> dict:
         "predicates": len(by_predicate),
         "nodesByCategory": by_category,
         "edgesByPredicate": by_predicate,
-        "biolink": (graph_json or {}).get("biolink"),
+        "biolink": (graph_json or {}).get("biolink"),  # graph_json is validated (read_graph_json)
         "biolinkVersion": (graph_json or {}).get("biolink_version"),
         "graphJsonCounts": {k: counts.get(k) for k in ("nodes", "edges", "dropped_edges") if k in counts},
     }
@@ -285,7 +347,7 @@ def connectivity_section(con) -> tuple[dict, np.ndarray]:
     del ends
 
     if n:
-        adjacency = coo_matrix((np.ones(s.size, dtype=np.int8), (s, o)), shape=(n, n)).tocsr()
+        adjacency = coo_matrix((np.ones(s.size, dtype=bool), (s, o)), shape=(n, n)).tocsr()
         count, labels = connected_components(adjacency, directed=True, connection="weak")
         del adjacency
         sizes = np.sort(np.bincount(labels))[::-1]
@@ -369,7 +431,7 @@ def flag(code: str, level: str, count: int, message: str, examples: list | None 
     return {"code": code, "level": level, "count": int(count), "message": message, "examples": examples or []}
 
 
-def quality_section(con, graph_json: dict | None, size: dict) -> dict:
+def quality_section(con, graph_json: dict | None, graph_json_problems: list[str], size: dict) -> dict:
     """Data-quality checks. Every check's count is in `checks` (0 included); a check with
     a non-zero count is also a flag with examples. Warnings are likely errors in the
     graph; info flags are worth knowing but expected in some graphs."""
@@ -393,7 +455,7 @@ def quality_section(con, graph_json: dict | None, size: dict) -> dict:
         "they are left out of the schema, connectivity and hubs sections",
         f"""SELECT DISTINCT coalesce(missing_subject, missing_object) AS id FROM edge
             WHERE missing_subject IS NOT NULL OR missing_object IS NOT NULL ORDER BY id {lim}""")
-    add("missing-node-id", "warning", scalar(con, "SELECT count(*) FROM nodes_src WHERE coalesce(id, '') = ''"),
+    add("missing-node-id", "warning", scalar(con, "SELECT count(*) FROM node_row WHERE coalesce(id, '') = ''"),
         "node rows without an id; they are left out")
     add("duplicate-node-id", "warning", scalar(con, "SELECT count(*) FROM node WHERE copies > 1"),
         "node ids on more than one row; the first row is used",
@@ -422,16 +484,16 @@ def quality_section(con, graph_json: dict | None, size: dict) -> dict:
     if graph_json is None:
         add("no-graph-json", "info", 1, "no graph.json beside the graph files")
     else:
+        add("unreadable-graph-json", "warning", len(graph_json_problems),
+            "graph.json, or some of its fields, can't be read; those are left out", examples=graph_json_problems)
         counts = graph_json.get("counts") or {}
         add("dropped-edges", "info", counts.get("dropped_edges"),
             "relationships the export dropped because they lead to records outside the graph (graph.json)")
-        stated = {k: counts.get(k) for k in ("nodes", "edges") if isinstance(counts.get(k), int)}
         # graph.json counts rows, so compare with the rows read (duplicates and all).
-        read = {"nodes": scalar(con, "SELECT count(*) FROM nodes_src"), "edges": size["edges"]}
-        differ = [f"{k}: graph.json {v}, files {read[k]}" for k, v in stated.items() if v != read[k]]
+        read = {"nodes": scalar(con, "SELECT count(*) FROM node_row"), "edges": size["edges"]}
+        differ = [f"{k}: graph.json {counts[k]}, files {read[k]}" for k in ("nodes", "edges")
+                  if k in counts and counts[k] != read[k]]
         add("counts-mismatch", "warning", len(differ), "graph.json counts differ from the files", examples=differ)
-        if "error" in graph_json:
-            add("unreadable-graph-json", "warning", 1, f"graph.json can't be read: {graph_json['error']}")
 
     return {"checks": checks, "flags": flags,
             "warnings": sum(1 for f in flags if f["level"] == "warning"),
@@ -439,24 +501,36 @@ def quality_section(con, graph_json: dict | None, size: dict) -> dict:
 
 
 def graph_json_summary(graph_json: dict | None) -> dict | None:
-    """What report.json repeats of graph.json: provenance and the models' naming."""
-    if graph_json is None or "error" in graph_json:
-        return graph_json
+    """What report.json repeats of graph.json (validated): provenance and the models' naming."""
+    if graph_json is None:
+        return None
     return {
         "layoutVersion": graph_json.get("layout_version"),
         "biolink": graph_json.get("biolink"),
         "biolinkVersion": graph_json.get("biolink_version"),
         "generatedAt": graph_json.get("generated_at"),
         "source": graph_json.get("source"),
-        "prefixes": sorted((graph_json.get("prefixes") or {}).keys()),
+        "prefixes": sorted(graph_json.get("prefixes") or {}),
         "unresolvedPrefixes": graph_json.get("unresolved_prefixes") or [],
-        "models": [{"name": m.get("name"), "version": m.get("version"), "nameProperty": m.get("name_property"),
-                    "nameFrom": m.get("name_from") or []}
-                   for m in graph_json.get("models") or [] if isinstance(m, dict)],
+        "models": [{"name": m["name"], "version": m.get("version"), "nameProperty": m.get("name_property"),
+                    "nameFrom": m.get("name_from") or []} for m in graph_json.get("models") or []],
     }
 
 
 # --- Outputs ---------------------------------------------------------------------------
+
+
+# A spreadsheet runs a cell starting with one of these as a formula.
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_cell(value):
+    """A CSV value; text a spreadsheet would run as a formula gets a leading '."""
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.startswith(FORMULA_START):
+        return "'" + value
+    return value
 
 
 def write_csv(path: str, header: list[str], table: list[dict]) -> None:
@@ -464,7 +538,7 @@ def write_csv(path: str, header: list[str], table: list[dict]) -> None:
         w = csv.writer(f)
         w.writerow(header)
         for r in table:
-            w.writerow(["" if r.get(h) is None else r.get(h) for h in header])
+            w.writerow([csv_cell(r.get(h)) for h in header])
 
 
 def write_csvs(con, out: str, report: dict) -> list[str]:
@@ -543,7 +617,14 @@ def write_histogram(path: str, degree: np.ndarray) -> bool:
     return True
 
 
+# Graph text in report.md is inert: markdown punctuation that could make links, images,
+# code or table cells is backslash-escaped, and < > (HTML) become entities.
+MD_ESCAPES = {"\\": "\\\\", "|": "\\|", "[": "\\[", "]": "\\]", "!": "\\!", "`": "\\`", "*": "\\*",
+              "_": "\\_", "<": "&lt;", ">": "&gt;", "&": "&amp;", "\n": " ", "\r": " "}
+
+
 def md_cell(value) -> str:
+    """A value as markdown text: numbers formatted, text escaped (MD_ESCAPES)."""
     if value is None:
         return ""
     if isinstance(value, float):
@@ -551,7 +632,7 @@ def md_cell(value) -> str:
         return f"{int(value):,}" if value.is_integer() else f"{value:,.1f}"
     if isinstance(value, int):
         return f"{value:,}"
-    return str(value).replace("|", "\\|").replace("\n", " ")
+    return "".join(MD_ESCAPES.get(ch, ch) for ch in str(value))
 
 
 def md_table(columns: list[tuple[str, str]], table: list[dict], more: str = "") -> list[str]:
@@ -572,19 +653,21 @@ def markdown(report: dict) -> str:
     app = report["app"]
     lines = ["# Knowledge graph summary", ""]
     if app["error"]:
-        return "\n".join(lines + [f"**The graph couldn't be read:** {app['error']}", ""])
+        return "\n".join(lines + [f"**The graph couldn't be read:** {md_cell(app['error'])}", ""])
     s, sc, c, h, o, q = (report[k] for k in ("size", "schema", "connectivity", "hubs", "ontology", "quality"))
     g = report.get("graphJson") or {}
-    lines += [f"Read from the {report['input']['format']} files in `{report['input']['graphDir']}`"
-              + (f"; graph.json made {g['generatedAt']}" if g.get("generatedAt") else "") + ".", ""]
+    lines += [f"Read from the {report['input']['format']} files in {md_cell(report['input']['graphDir'])}"
+              + (f"; graph.json made {md_cell(g['generatedAt'])}" if g.get("generatedAt") else "") + ". "
+              "Each node is counted under one category: a record under its model (its pennsieve: "
+              "category), any other node under its first category.", ""]
 
     lines += ["## Size", "",
               "| | |", "|---|---|",
               f"| Nodes | {s['nodes']:,} ({s['recordNodes']:,} records, {s['termNodes']:,} ontology terms) |",
               f"| Edges | {s['edges']:,} |",
               f"| Categories / predicates | {s['categories']:,} / {s['predicates']:,} |",
-              f"| Biolink (graph.json) | {s['biolink'] or 'not stated'}"
-              + (f", Biolink {s['biolinkVersion']}" if s.get("biolinkVersion") else "") + " |", ""]
+              f"| Biolink (graph.json) | {md_cell(s['biolink']) or 'not stated'}"
+              + (f", Biolink {md_cell(s['biolinkVersion'])}" if s.get("biolinkVersion") else "") + " |", ""]
     lines += ["### Nodes by category", ""] + md_table([("category", "Category"), ("nodes", "Nodes")],
                                                       s["nodesByCategory"], "nodes_by_category.csv")
     lines += ["### Edges by predicate", ""] + md_table([("predicate", "Predicate"), ("edges", "Edges")],
@@ -643,8 +726,8 @@ def markdown(report: dict) -> str:
     else:
         lines += ["| Level | Check | Count | What | Examples |", "|---|---|---|---|---|"]
         for f in q["flags"]:
-            examples = ", ".join(f"`{e}`" for e in f["examples"][:3])
-            lines.append(f"| {f['level']} | {f['code']} | {f['count']:,} | {md_cell(f['message'])} | {md_cell(examples)} |")
+            examples = ", ".join(md_cell(e) for e in f["examples"][:3])
+            lines.append(f"| {f['level']} | {f['code']} | {f['count']:,} | {md_cell(f['message'])} | {examples} |")
         lines.append("")
     return "\n".join(lines)
 
@@ -654,23 +737,26 @@ def markdown(report: dict) -> str:
 
 def connect() -> duckdb.DuckDBPyConnection:
     """An in-memory DuckDB that spills to the temp folder, kept within the container's
-    memory limit (cgroup v2) with room for the NumPy arrays beside it."""
+    memory limit (cgroup v2, or v1) with room for the NumPy arrays beside it."""
     con = duckdb.connect()
     con.execute(f"SET temp_directory = {sql_string(os.path.join(tempfile.gettempdir(), 'kg-summary-duckdb'))}")
-    try:
-        with open("/sys/fs/cgroup/memory.max", encoding="ascii") as f:
-            limit = f.read().strip()
-        if limit.isdigit():
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path, encoding="ascii") as f:
+                limit = f.read().strip()
+        except OSError:
+            continue
+        # "max" (v2) or a huge number (v1) means no limit.
+        if limit.isdigit() and int(limit) < 1 << 50:
             con.execute(f"SET memory_limit = '{int(limit) * 6 // 10 >> 20}MB'")
-    except OSError:
-        pass
+        break
     con.execute("SET preserve_insertion_order = false")
     return con
 
 
 def summarize(graph_dir: str, out: str | None, top_n: int, per_category: int) -> dict:
     files = find_files(graph_dir)
-    graph_json = read_graph_json(graph_dir)
+    graph_json, graph_json_problems = read_graph_json(graph_dir)
     con = connect()
     columns = open_graph(con, files)
     t = time.monotonic()
@@ -685,7 +771,7 @@ def summarize(graph_dir: str, out: str | None, top_n: int, per_category: int) ->
     report["connectivity"], degree = connectivity_section(con)
     report["hubs"] = hubs_section(con, top_n, per_category)
     report["ontology"] = ontology_section(con, top_n)
-    report["quality"] = quality_section(con, graph_json, report["size"])
+    report["quality"] = quality_section(con, graph_json, graph_json_problems, report["size"])
     report["outputs"] = {}
     if out:
         os.makedirs(out, exist_ok=True)

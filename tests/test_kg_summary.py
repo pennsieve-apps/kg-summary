@@ -1,13 +1,15 @@
 """Tests for kg_summary.py. Run with: make test (or python -m pytest tests).
 
 The fixture (tests/fixtures/graph, written by tests/fixtures/make_fixture.py) has 8 record
-nodes, 4 term nodes and 12 edges, with one dangling edge, one duplicate node id, one
-empty name, one bare-prefix category (MESH), one self-loop and 2 dropped edges.
+nodes, 4 term nodes and 12 edges; the samples' model is bound to biolink:MaterialSample.
+It has one dangling edge, one duplicate node id (its second row differs), one empty name,
+one bare-prefix category (MESH), one self-loop and 2 dropped edges.
 """
 
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -69,9 +71,22 @@ def test_size(report):
     by_category = {r["category"]: r["nodes"] for r in s["nodesByCategory"]}
     assert by_category == {"pennsieve:subject": 3, "pennsieve:sample": 3, "pennsieve:protocol": 2,
                            "biolink:AnatomicalEntity": 2, "biolink:OrganismTaxon": 1, "MESH": 1}
+    # Records count under their model, not the Biolink class bound to it; the duplicate
+    # row's category (pennsieve:other) isn't used.
     by_predicate = {r["predicate"]: r["edges"] for r in s["edgesByPredicate"]}
     assert by_predicate == {"biolink:has_attribute": 6, "pennsieve:has_sample": 4,
                             "pennsieve:derived_from": 1, "pennsieve:follows": 1}
+
+
+def test_biolink_bound_records_count_under_their_model(report):
+    """Samples are [biolink:MaterialSample, pennsieve:sample]; every section uses pennsieve:sample."""
+    assert "biolink:MaterialSample" not in json.dumps({k: report[k] for k in ("size", "schema", "connectivity", "hubs")})
+    assert any(r["category"] == "pennsieve:sample" for r in report["connectivity"]["degreeByCategory"])
+
+
+def test_duplicate_node_uses_first_row(report):
+    x2 = next(r for r in report["hubs"]["top"] if r["id"] == X2)
+    assert (x2["name"], x2["category"]) == ("brain slice 2", "pennsieve:sample")
 
 
 def test_schema_metagraph(report):
@@ -172,9 +187,8 @@ def test_foreign_kgx(tmp_path):
     (graph / "edges.tsv").write_text("subject\tpredicate\tobject\nMONDO:1\tbiolink:has_phenotype\tHP:1\n")
     r = summarize(graph, tmp_path / "out")
     assert (r["size"]["nodes"], r["size"]["edges"], r["size"]["recordNodes"]) == (2, 1, 0)
-    # Both categories of a multi-category node count; its first is its primary one.
-    assert {c["category"] for c in r["size"]["nodesByCategory"]} == {
-        "biolink:Disease", "biolink:NamedThing", "biolink:PhenotypicFeature"}
+    # A term with several categories counts under its first.
+    assert {c["category"] for c in r["size"]["nodesByCategory"]} == {"biolink:Disease", "biolink:PhenotypicFeature"}
     assert r["schema"]["triples"][0]["subject_category"] == "biolink:Disease"
     f = flags(r)
     assert f["empty-name"]["count"] == 2 and "no-graph-json" in f
@@ -229,3 +243,108 @@ def test_main_without_graph(tmp_path):
     result, summary, report, _ = run_main(tmp_path, tmp_path / "input")
     assert result.returncode == 1 and summary["exitCode"] == 1
     assert "no graph input" in report["app"]["error"]
+
+
+def write_graph(tmp_path, nodes, edges, graph_json=None):
+    """A plain-TSV graph in tmp_path/input/graph."""
+    graph = tmp_path / "input" / "graph"
+    graph.mkdir(parents=True)
+    (graph / "nodes.tsv").write_text(nodes)
+    (graph / "edges.tsv").write_text(edges)
+    if graph_json is not None:
+        (graph / "graph.json").write_text(graph_json)
+    return graph
+
+
+def test_empty_graph(tmp_path):
+    graph = write_graph(tmp_path, "id\tcategory\tname\n", "id\tsubject\tpredicate\tobject\n")
+    r = summarize(graph, tmp_path / "out")
+    assert (r["size"]["nodes"], r["size"]["edges"], r["connectivity"]["components"]) == (0, 0, 0)
+    assert r["connectivity"]["degree"]["max"] is None and r["hubs"]["top"] == []
+    assert r["outputs"]["histogram"] is None
+    assert "## Data quality" in kg_summary.markdown(dict(r, app={"error": None}))
+
+
+def test_nodes_only_graph(tmp_path):
+    graph = write_graph(tmp_path, "id\tcategory\tname\nA:1\tbiolink:Gene\ta\nA:2\tbiolink:Gene\tb\n",
+                        "id\tsubject\tpredicate\tobject\n")
+    r = summarize(graph, tmp_path / "out")
+    c = r["connectivity"]
+    assert (c["components"], c["largestComponent"], c["isolatedNodes"]) == (2, 1, 2)
+    assert r["schema"]["triples"] == [] and r["hubs"]["top"] == []
+
+
+def test_biolink_first_record_category(tmp_path):
+    """A record node's pennsieve: category is its primary one even when a Biolink class is first."""
+    graph = write_graph(tmp_path,
+                        "id\tcategory\tname\n"
+                        "pennsieve:1\tbiolink:MaterialSample|pennsieve:sample\ts1\n"
+                        "pennsieve:2\tbiolink:MaterialSample|pennsieve:specimen\ts2\n",
+                        "id\tsubject\tpredicate\tobject\ne1\tpennsieve:1\tpennsieve:from\tpennsieve:2\n")
+    r = summarize(graph, tmp_path / "out")
+    assert {c["category"] for c in r["size"]["nodesByCategory"]} == {"pennsieve:sample", "pennsieve:specimen"}
+    assert [(t["subject_category"], t["object_category"]) for t in r["schema"]["triples"]] == [
+        ("pennsieve:sample", "pennsieve:specimen")]
+    assert {h["category"] for h in r["hubs"]["byCategory"]} == {"pennsieve:sample", "pennsieve:specimen"}
+
+
+def test_malformed_graph_json(tmp_path):
+    bad = json.dumps({"biolink": ["full"], "prefixes": ["a"], "models": [{"name": 3}, {"name": "m", "version": 1}],
+                      "counts": {"nodes": 1, "edges": [], "dropped_edges": "x"}})
+    graph = write_graph(tmp_path, "id\tcategory\tname\nA:1\tbiolink:Gene\ta\n", "subject\tpredicate\tobject\n", bad)
+    r = summarize(graph, tmp_path / "out")
+    f = flags(r)
+    assert f["unreadable-graph-json"]["examples"] == [
+        "biolink is not a string", "prefixes is not an object", "counts.edges is not a count",
+        "counts.dropped_edges is not a count", "models[0] is malformed"]
+    assert "dropped-edges" not in f and "counts-mismatch" not in f
+    assert r["size"]["biolink"] is None and [m["name"] for m in r["graphJson"]["models"]] == ["m"]
+
+    (graph / "graph.json").write_text(json.dumps({"counts": [1, 2]}))
+    assert flags(summarize(graph, tmp_path / "out2"))["unreadable-graph-json"]["examples"] == ["counts is not an object"]
+    (graph / "graph.json").write_text("{not json")
+    assert flags(summarize(graph, tmp_path / "out3"))["unreadable-graph-json"]["count"] == 1
+
+
+EVIL = "![x](https://evil.example/p.png) <script>alert(1)</script> `code` [link](https://evil.example)"
+
+
+def test_markdown_is_inert(tmp_path):
+    graph = write_graph(tmp_path, f"id\tcategory\tname\nA:1\tbiolink:Gene\t{EVIL}\nA:2\tbiolink:Gene\tb\n",
+                        "subject\tpredicate\tobject\nA:1\tbiolink:related_to\tA:2\n",
+                        json.dumps({"generated_at": "<img src=x onerror=alert(1)>", "biolink": "[full](javascript:x)"}))
+    r = summarize(graph, tmp_path / "out")
+    md = kg_summary.markdown(dict(r, app={"error": None}))
+    # The report's own image (the histogram) is the one markdown image allowed.
+    md = md.replace(f"![Degree distribution]({kg_summary.HISTOGRAM_PNG})", "")
+    for raw in ("![", "<script", "<img", "`code`"):
+        assert raw not in md, raw
+    assert not re.search(r"(?<!\\)\]\(", md)  # no unescaped link
+    assert "&lt;script&gt;" in md and "\\[full\\]" in md
+
+
+def test_md_cell():
+    assert kg_summary.md_cell("a|b\r\nc") == "a\\|b  c"
+    assert kg_summary.md_cell("<b>&") == "&lt;b&gt;&amp;"
+    assert kg_summary.md_cell("\\[") == "\\\\\\["
+    assert kg_summary.md_cell(2.0) == "2" and kg_summary.md_cell(3.25) == "3.2" and kg_summary.md_cell(1234) == "1,234"
+
+
+def test_csv_formulas_are_inert(tmp_path):
+    graph = write_graph(tmp_path, "id\tcategory\tname\n=HYPERLINK(1)\t+cat\t@SUM(A1)\nA:2\tbiolink:Gene\t-2\n",
+                        "subject\tpredicate\tobject\n=HYPERLINK(1)\tbiolink:related_to\tA:2\n")
+    out = tmp_path / "out"
+    summarize(graph, out)
+    text = "".join((out / name).read_text() for name in os.listdir(out) if name.endswith(".csv"))
+    assert "'=HYPERLINK(1)" in text and "'+cat" in text and "'@SUM(A1)" in text and "'-2" in text
+    for line in text.splitlines():
+        for cell in line.split(","):
+            assert not cell.startswith(("=", "+", "-", "@")), line
+
+
+def test_many_parallel_edges_still_connect(tmp_path):
+    """256 parallel edges sum to 0 in an int8 matrix; the adjacency must not lose them."""
+    edges = "subject\tpredicate\tobject\n" + "A:1\tbiolink:related_to\tA:2\n" * 256
+    graph = write_graph(tmp_path, "id\tcategory\tname\nA:1\tbiolink:Gene\ta\nA:2\tbiolink:Gene\tb\n", edges)
+    c = summarize(graph, tmp_path / "out")["connectivity"]
+    assert (c["components"], c["largestComponent"], c["degree"]["max"]) == (1, 2, 256)

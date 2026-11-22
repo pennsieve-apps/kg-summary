@@ -3,10 +3,11 @@
 writes a graph: nodes/edges as KGX TSV (gzipped) and Parquet, and graph.json.
 
 A small dataset: three subjects, three samples, two protocols and four ontology terms,
-with one of each data-quality problem the app flags:
+with samples of a model bound to a Biolink class (categories [biolink:MaterialSample,
+pennsieve:sample]) and one of each data-quality problem the app flags:
 
   - a dangling edge (a sample linked to a record that isn't in the node file)
-  - a duplicate node id (sample 2's row twice)
+  - a duplicate node id (sample 2's row twice, the second with another name and category)
   - an empty name (protocol B)
   - a bare-prefix category (MESH, which has no Biolink class)
   - a self-loop (sample 1 derived from itself)
@@ -38,24 +39,31 @@ P1 = "pennsieve:615fc274-7380-4293-e4a5-b02b3c4d5e67"
 P2 = "pennsieve:7260d385-8491-43a4-f5b6-c13c4d5e6f78"
 MISSING = "pennsieve:83710e96-95a2-44b5-a6c7-d24d5e6f7089"
 BRAIN, LIVER, MOUSE, MESH_LIVER = "UBERON:0000955", "UBERON:0002107", "NCBITaxon:10090", "MESH:D008099"
+# The sample model is bound to a Biolink class.
+SAMPLE_CLASS = "biolink:MaterialSample"
 
 
 def term(curie, category, name, source):
     return (curie, [category], name, [source] if source else [], json.dumps({"ontology": curie.split(":")[0]}))
 
 
-def record(rid, model, name, fields):
-    return (rid, [f"pennsieve:{model}"], name, [DATASET], json.dumps(fields, separators=(",", ":")))
+def record(rid, model, name, fields, biolink=None):
+    """A record node; a model bound to a Biolink class has that class first, as the export
+    writes it ([biolink:X, pennsieve:<model>])."""
+    categories = ([biolink] if biolink else []) + [f"pennsieve:{model}"]
+    return (rid, categories, name, [DATASET], json.dumps(fields, separators=(",", ":")))
 
 
 NODES = [
     record(S1, "subject", "mouse 1", {"subject_id": "mouse 1", "species": MOUSE}),
     record(S2, "subject", "mouse 2", {"subject_id": "mouse 2", "species": MOUSE}),
     record(S3, "subject", "mouse 3", {"subject_id": "mouse 3"}),
-    record(X1, "sample", "brain slice 1", {"sample_id": "brain slice 1", "anatomy": BRAIN}),
-    record(X2, "sample", "brain slice 2", {"sample_id": "brain slice 2", "anatomy": BRAIN}),
-    record(X2, "sample", "brain slice 2", {"sample_id": "brain slice 2", "anatomy": BRAIN}),
-    record(X3, "sample", "liver sample", {"sample_id": "liver sample", "anatomy": LIVER, "mesh_term": MESH_LIVER}),
+    record(X1, "sample", "brain slice 1", {"sample_id": "brain slice 1", "anatomy": BRAIN}, SAMPLE_CLASS),
+    record(X2, "sample", "brain slice 2", {"sample_id": "brain slice 2", "anatomy": BRAIN}, SAMPLE_CLASS),
+    # The duplicate: a second row for sample 2, with another name and category; the first row counts.
+    record(X2, "other", "brain slice 2 (copy)", {}),
+    record(X3, "sample", "liver sample", {"sample_id": "liver sample", "anatomy": LIVER, "mesh_term": MESH_LIVER},
+           SAMPLE_CLASS),
     record(P1, "protocol", "protocol A", {"title": "protocol A"}),
     record(P2, "protocol", "", {}),
     term(BRAIN, "biolink:AnatomicalEntity", "brain", "infores:uberon"),
@@ -123,7 +131,7 @@ def main():
                      "NCBITaxon": "http://purl.obolibrary.org/obo/NCBITaxon_", "MESH": "http://id.nlm.nih.gov/mesh/"},
         "models": [
             {"name": "protocol", "version": 1, "category": ["pennsieve:protocol"], "name_property": "title"},
-            {"name": "sample", "version": 1, "category": ["pennsieve:sample"], "name_from": ["sample_id"]},
+            {"name": "sample", "version": 1, "category": [SAMPLE_CLASS, "pennsieve:sample"], "name_from": ["sample_id"]},
             {"name": "subject", "version": 1, "category": ["pennsieve:subject"], "name_from": ["subject_id"]},
         ],
         "counts": {"nodes": len(NODES), "edges": len(EDGES), "dropped_edges": 2},

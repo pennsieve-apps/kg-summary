@@ -36,13 +36,17 @@ elsewhere works too. `graph.json` is optional.
 
 ## What it reports
 
-**Size.** Nodes and edges; nodes by category (a node with several categories counts under
-each) and edges by predicate; record nodes (`pennsieve:<record uuid>`) and ontology term
+**One category per node.** A KGX node can have several categories; the export gives a
+record of a model bound to a Biolink class both (`[biolink:X, pennsieve:<model>]`). Every
+section counts a node under one, its primary category: a record's (`pennsieve:` id)
+`pennsieve:` category, its model, and any other node's first category. So models bound to
+the same Biolink class stay apart, and the sections agree.
+
+**Size.** Nodes and edges; nodes by (primary) category and edges by predicate; record nodes (`pennsieve:<record uuid>`) and ontology term
 nodes (any other id); the Biolink level and version from `graph.json`.
 
 **Schema.** The metagraph: for each subject category, predicate and object category, how
-many edges. Wherever a node needs one category (here, degrees and hubs), its first one is
-used.
+many edges.
 
 **Connectivity.** Weakly connected components (count, the largest and the next, nodes
 without edges) and the degree distribution (min, median, p90, p99, max, mean), overall and
@@ -63,12 +67,12 @@ some graphs.
 | Check | Level | What |
 |---|---|---|
 | `dangling-edge` | warning | an edge's subject or object isn't in the node file (such edges are left out of the schema, connectivity and hubs) |
-| `duplicate-node-id` / `duplicate-edge-id` | warning | an id on more than one row (the first node row is used) |
+| `duplicate-node-id` / `duplicate-edge-id` | warning | an id on more than one row (a node's category and name are from its first row in the file) |
 | `missing-node-id` | warning | a node row without an id (left out) |
 | `empty-name` | warning | a node without a name |
 | `missing-category` | warning | a node without a category |
 | `counts-mismatch` | warning | `graph.json`'s node or edge count differs from the files' rows |
-| `unreadable-graph-json` | warning | `graph.json` isn't valid JSON |
+| `unreadable-graph-json` | warning | `graph.json` isn't valid JSON, or a field the app reads has the wrong type (e.g. `counts.dropped_edges` not a number); that field is left out and the run goes on |
 | `bare-prefix-category` | info | a category that is neither `biolink:` nor `pennsieve:`, such as `MESH`: the bare prefix the export gives a term of an ontology without a Biolink class |
 | `self-loop` | info | an edge from a node to itself |
 | `dropped-edges` | info | relationships the export dropped because they lead to records outside the graph (`graph.json`) |
@@ -79,13 +83,17 @@ some graphs.
 All in `OUTPUT_DIR` (the `report` output):
 
 - **`report.md`**: the summary, with short tables (15 rows; the CSVs have the rest).
-  Also printed to the log.
+  Also printed to the log. Text from the graph is escaped (markdown punctuation with a
+  backslash, `<` `>` `&` as entities), so names can't add links, images or HTML.
 - **`report.json`**: machine-readable, with the keys `app`, `input`, `graphJson`,
   `size`, `schema`, `connectivity`, `hubs`, `ontology`, `quality` and `outputs`.
 - **CSVs**: `nodes_by_category.csv`, `edges_by_predicate.csv`, `metagraph.csv`,
   `degree_by_category.csv`, `hubs.csv` (`scope` top or category) and `terms.csv` (every
   term node with how many edges and records use it).
 - **`degree_histogram.png`**: nodes by degree, log-log.
+
+In the CSVs a text value starting with `=`, `+`, `-`, `@`, a tab or a carriage return gets
+a leading `'`, so a spreadsheet doesn't run it as a formula.
 
 The last log line is `KG_SUMMARY {...}`: nodes, edges, components, warning and info flags,
 seconds and the exit code. The step exits 1 when the graph can't be read (no `graph/`
@@ -113,7 +121,7 @@ nodes, 2,295,061 edges, hubs of up to ~25,000 edges), in the image, at 1 vCPU / 
 
 | Input | Time | Peak memory (cgroup) |
 |---|---|---|
-| Parquet (98 MB) | 1.7-1.9 s | 790-820 MiB |
+| Parquet (98 MB) | 1.7-1.9 s | 790-830 MiB |
 | TSV, gzipped (80 MB) | 3 s | 500 MiB |
 
 It also runs in 1 GiB; 2 GiB leaves room for graphs a few times larger.
@@ -176,7 +184,9 @@ It is built on these open-source libraries:
   [doi:10.1109/MCSE.2007.55](https://doi.org/10.1109/MCSE.2007.55)
 - [Apache Arrow](https://arrow.apache.org) (PyArrow).
 
-The full author lists are in [CITATION.cff](CITATION.cff).
+The full author lists are in [CITATION.cff](CITATION.cff). (Crossref records the DuckDB
+paper's title as "DuckDB" with the subtitle "an Embeddable Analytical Database"; the
+citation uses the full title, so a check of the main title alone reports a mismatch.)
 
 ## Credits
 
