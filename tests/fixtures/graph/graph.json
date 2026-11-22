@@ -1,0 +1,61 @@
+{
+  "layout": "kgx",
+  "layout_version": "1.0",
+  "conforms_to": "https://schemas.pennsieve.io/structures/kgx",
+  "biolink_version": "4.2.2",
+  "biolink": "partial",
+  "canonical": "tsv",
+  "files": {
+    "nodes": "nodes.tsv.gz",
+    "edges": "edges.tsv.gz",
+    "summary": "graph_stats.yaml"
+  },
+  "source": {
+    "dataset_id": 1,
+    "dataset_node_id": "N:dataset:3f0c5a52-8f3e-4a51-9a5e-2d1b7c6e9a10",
+    "mode": "view"
+  },
+  "generated_at": "2026-11-22T12:00:00Z",
+  "prefixes": {
+    "pennsieve": "urn:pennsieve:",
+    "biolink": "https://w3id.org/biolink/vocab/",
+    "UBERON": "http://purl.obolibrary.org/obo/UBERON_",
+    "NCBITaxon": "http://purl.obolibrary.org/obo/NCBITaxon_",
+    "MESH": "http://id.nlm.nih.gov/mesh/"
+  },
+  "models": [
+    {
+      "name": "protocol",
+      "version": 1,
+      "category": [
+        "pennsieve:protocol"
+      ],
+      "name_property": "title"
+    },
+    {
+      "name": "sample",
+      "version": 1,
+      "category": [
+        "pennsieve:sample"
+      ],
+      "name_from": [
+        "sample_id"
+      ]
+    },
+    {
+      "name": "subject",
+      "version": 1,
+      "category": [
+        "pennsieve:subject"
+      ],
+      "name_from": [
+        "subject_id"
+      ]
+    }
+  ],
+  "counts": {
+    "nodes": 13,
+    "edges": 12,
+    "dropped_edges": 2
+  }
+}

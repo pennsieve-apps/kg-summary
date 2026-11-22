@@ -1,0 +1,417 @@
+cff-version: "1.2.0"
+message: >-
+  If you use this app, please cite this release and Pennsieve (RRID:SCR_021677); the works it
+  builds on (the KGX format and Biolink Model, and the open-source libraries it uses) are listed
+  under references.
+type: software
+title: KG Summary
+abstract: >-
+  A Pennsieve app that summarises a dataset's knowledge graph (a KGX graph of its metadata
+  records and the ontology terms they use): size, the category-predicate-category metagraph,
+  connected components and degree distribution, hubs, ontology use and data-quality flags, as
+  report.json, report.md, CSV tables and a degree histogram.
+authors:
+- name: Pennsieve (University of Pennsylvania)
+contact:
+- given-names: Joost
+  family-names: Wagenaar
+  orcid: https://orcid.org/0009-0004-5925-5451
+  affiliation: University of Pennsylvania
+repository-code: https://github.com/pennsieve-apps/kg-summary
+license: Apache-2.0
+keywords:
+- knowledge-graph
+- kgx
+- biolink
+- metadata
+- qc
+- pennsieve
+references:
+- type: software
+  title: "KGX: Knowledge Graph Exchange"
+  authors:
+  - name: Biolink
+  url: https://github.com/biolink/kgx
+- type: software
+  title: Apache Arrow
+  authors:
+  - name: The Apache Software Foundation
+  url: https://arrow.apache.org
+- type: article
+  title: "Biolink Model: A universal schema for knowledge graphs in clinical, biomedical, and translational science"
+  authors:
+  - family-names: Unni
+    given-names: Deepak R.
+  - family-names: Moxon
+    given-names: Sierra A. T.
+  - family-names: Bada
+    given-names: Michael
+  - family-names: Brush
+    given-names: Matthew
+  - family-names: Bruskiewich
+    given-names: Richard
+  - family-names: Caufield
+    given-names: J. Harry
+  - family-names: Clemons
+    given-names: Paul A.
+  - family-names: Dancik
+    given-names: Vlado
+  - family-names: Dumontier
+    given-names: Michel
+  - family-names: Fecho
+    given-names: Karamarie
+  - family-names: Glusman
+    given-names: Gustavo
+  - family-names: Hadlock
+    given-names: Jennifer J.
+  - family-names: Harris
+    given-names: Nomi L.
+  - family-names: Joshi
+    given-names: Arpita
+  - family-names: Putman
+    given-names: Tim
+  - family-names: Qin
+    given-names: Guangrong
+  - family-names: Ramsey
+    given-names: Stephen A.
+  - family-names: Shefchek
+    given-names: Kent A.
+  - family-names: Solbrig
+    given-names: Harold
+  - family-names: Soman
+    given-names: Karthik
+  - family-names: Thessen
+    given-names: Anne E.
+  - family-names: Haendel
+    given-names: Melissa A.
+  - family-names: Bizon
+    given-names: Chris
+  - family-names: Mungall
+    given-names: Christopher J.
+  - name: The Biomedical Data Translator Consortium
+  journal: "Clinical and Translational Science"
+  volume: 15
+  issue: 8
+  start: 1848
+  end: 1855
+  year: 2022
+  doi: 10.1111/cts.13302
+- type: conference-paper
+  title: "DuckDB: an Embeddable Analytical Database"
+  authors:
+  - family-names: Raasveldt
+    given-names: Mark
+  - family-names: Mühleisen
+    given-names: Hannes
+  collection-title: "Proceedings of the 2019 International Conference on Management of Data"
+  start: 1981
+  end: 1984
+  year: 2019
+  doi: 10.1145/3299869.3320212
+- type: article
+  title: "SciPy 1.0: fundamental algorithms for scientific computing in Python"
+  authors:
+  - family-names: Virtanen
+    given-names: Pauli
+  - family-names: Gommers
+    given-names: Ralf
+  - family-names: Oliphant
+    given-names: Travis E.
+  - family-names: Haberland
+    given-names: Matt
+  - family-names: Reddy
+    given-names: Tyler
+  - family-names: Cournapeau
+    given-names: David
+  - family-names: Burovski
+    given-names: Evgeni
+  - family-names: Peterson
+    given-names: Pearu
+  - family-names: Weckesser
+    given-names: Warren
+  - family-names: Bright
+    given-names: Jonathan
+  - family-names: van der Walt
+    given-names: Stéfan J.
+  - family-names: Brett
+    given-names: Matthew
+  - family-names: Wilson
+    given-names: Joshua
+  - family-names: Millman
+    given-names: K. Jarrod
+  - family-names: Mayorov
+    given-names: Nikolay
+  - family-names: Nelson
+    given-names: Andrew R. J.
+  - family-names: Jones
+    given-names: Eric
+  - family-names: Kern
+    given-names: Robert
+  - family-names: Larson
+    given-names: Eric
+  - family-names: Carey
+    given-names: C J
+  - family-names: Polat
+    given-names: İlhan
+  - family-names: Feng
+    given-names: Yu
+  - family-names: Moore
+    given-names: Eric W.
+  - family-names: VanderPlas
+    given-names: Jake
+  - family-names: Laxalde
+    given-names: Denis
+  - family-names: Perktold
+    given-names: Josef
+  - family-names: Cimrman
+    given-names: Robert
+  - family-names: Henriksen
+    given-names: Ian
+  - family-names: Quintero
+    given-names: E. A.
+  - family-names: Harris
+    given-names: Charles R.
+  - family-names: Archibald
+    given-names: Anne M.
+  - family-names: Ribeiro
+    given-names: Antônio H.
+  - family-names: Pedregosa
+    given-names: Fabian
+  - family-names: van Mulbregt
+    given-names: Paul
+  - name: SciPy 1.0 Contributors
+  - family-names: Vijaykumar
+    given-names: Aditya
+  - family-names: Bardelli
+    given-names: Alessandro Pietro
+  - family-names: Rothberg
+    given-names: Alex
+  - family-names: Hilboll
+    given-names: Andreas
+  - family-names: Kloeckner
+    given-names: Andreas
+  - family-names: Scopatz
+    given-names: Anthony
+  - family-names: Lee
+    given-names: Antony
+  - family-names: Rokem
+    given-names: Ariel
+  - family-names: Woods
+    given-names: C. Nathan
+  - family-names: Fulton
+    given-names: Chad
+  - family-names: Masson
+    given-names: Charles
+  - family-names: Häggström
+    given-names: Christian
+  - family-names: Fitzgerald
+    given-names: Clark
+  - family-names: Nicholson
+    given-names: David A.
+  - family-names: Hagen
+    given-names: David R.
+  - family-names: Pasechnik
+    given-names: Dmitrii V.
+  - family-names: Olivetti
+    given-names: Emanuele
+  - family-names: Martin
+    given-names: Eric
+  - family-names: Wieser
+    given-names: Eric
+  - family-names: Silva
+    given-names: Fabrice
+  - family-names: Lenders
+    given-names: Felix
+  - family-names: Wilhelm
+    given-names: Florian
+  - family-names: Young
+    given-names: G.
+  - family-names: Price
+    given-names: Gavin A.
+  - family-names: Ingold
+    given-names: Gert-Ludwig
+  - family-names: Allen
+    given-names: Gregory E.
+  - family-names: Lee
+    given-names: Gregory R.
+  - family-names: Audren
+    given-names: Hervé
+  - family-names: Probst
+    given-names: Irvin
+  - family-names: Dietrich
+    given-names: Jörg P.
+  - family-names: Silterra
+    given-names: Jacob
+  - family-names: Webber
+    given-names: James T
+  - family-names: Slavič
+    given-names: Janko
+  - family-names: Nothman
+    given-names: Joel
+  - family-names: Buchner
+    given-names: Johannes
+  - family-names: Kulick
+    given-names: Johannes
+  - family-names: Schönberger
+    given-names: Johannes L.
+  - family-names: de Miranda Cardoso
+    given-names: José Vinícius
+  - family-names: Reimer
+    given-names: Joscha
+  - family-names: Harrington
+    given-names: Joseph
+  - family-names: Rodríguez
+    given-names: Juan Luis Cano
+  - family-names: Nunez-Iglesias
+    given-names: Juan
+  - family-names: Kuczynski
+    given-names: Justin
+  - family-names: Tritz
+    given-names: Kevin
+  - family-names: Thoma
+    given-names: Martin
+  - family-names: Newville
+    given-names: Matthew
+  - family-names: Kümmerer
+    given-names: Matthias
+  - family-names: Bolingbroke
+    given-names: Maximilian
+  - family-names: Tartre
+    given-names: Michael
+  - family-names: Pak
+    given-names: Mikhail
+  - family-names: Smith
+    given-names: Nathaniel J.
+  - family-names: Nowaczyk
+    given-names: Nikolai
+  - family-names: Shebanov
+    given-names: Nikolay
+  - family-names: Pavlyk
+    given-names: Oleksandr
+  - family-names: Brodtkorb
+    given-names: Per A.
+  - family-names: Lee
+    given-names: Perry
+  - family-names: McGibbon
+    given-names: Robert T.
+  - family-names: Feldbauer
+    given-names: Roman
+  - family-names: Lewis
+    given-names: Sam
+  - family-names: Tygier
+    given-names: Sam
+  - family-names: Sievert
+    given-names: Scott
+  - family-names: Vigna
+    given-names: Sebastiano
+  - family-names: Peterson
+    given-names: Stefan
+  - family-names: More
+    given-names: Surhud
+  - family-names: Pudlik
+    given-names: Tadeusz
+  - family-names: Oshima
+    given-names: Takuya
+  - family-names: Pingel
+    given-names: Thomas J.
+  - family-names: Robitaille
+    given-names: Thomas P.
+  - family-names: Spura
+    given-names: Thomas
+  - family-names: Jones
+    given-names: Thouis R.
+  - family-names: Cera
+    given-names: Tim
+  - family-names: Leslie
+    given-names: Tim
+  - family-names: Zito
+    given-names: Tiziano
+  - family-names: Krauss
+    given-names: Tom
+  - family-names: Upadhyay
+    given-names: Utkarsh
+  - family-names: Halchenko
+    given-names: Yaroslav O.
+  - family-names: Vázquez-Baeza
+    given-names: Yoshiki
+  journal: "Nature Methods"
+  volume: 17
+  issue: 3
+  start: 261
+  end: 272
+  year: 2020
+  doi: 10.1038/s41592-019-0686-2
+- type: article
+  title: "Array programming with NumPy"
+  authors:
+  - family-names: Harris
+    given-names: Charles R.
+  - family-names: Millman
+    given-names: K. Jarrod
+  - family-names: van der Walt
+    given-names: Stéfan J.
+  - family-names: Gommers
+    given-names: Ralf
+  - family-names: Virtanen
+    given-names: Pauli
+  - family-names: Cournapeau
+    given-names: David
+  - family-names: Wieser
+    given-names: Eric
+  - family-names: Taylor
+    given-names: Julian
+  - family-names: Berg
+    given-names: Sebastian
+  - family-names: Smith
+    given-names: Nathaniel J.
+  - family-names: Kern
+    given-names: Robert
+  - family-names: Picus
+    given-names: Matti
+  - family-names: Hoyer
+    given-names: Stephan
+  - family-names: van Kerkwijk
+    given-names: Marten H.
+  - family-names: Brett
+    given-names: Matthew
+  - family-names: Haldane
+    given-names: Allan
+  - family-names: del Río
+    given-names: Jaime Fernández
+  - family-names: Wiebe
+    given-names: Mark
+  - family-names: Peterson
+    given-names: Pearu
+  - family-names: Gérard-Marchant
+    given-names: Pierre
+  - family-names: Sheppard
+    given-names: Kevin
+  - family-names: Reddy
+    given-names: Tyler
+  - family-names: Weckesser
+    given-names: Warren
+  - family-names: Abbasi
+    given-names: Hameer
+  - family-names: Gohlke
+    given-names: Christoph
+  - family-names: Oliphant
+    given-names: Travis E.
+  journal: "Nature"
+  volume: 585
+  issue: 7825
+  start: 357
+  end: 362
+  year: 2020
+  doi: 10.1038/s41586-020-2649-2
+- type: article
+  title: "Matplotlib: A 2D Graphics Environment"
+  authors:
+  - family-names: Hunter
+    given-names: John D.
+  journal: "Computing in Science & Engineering"
+  volume: 9
+  issue: 3
+  start: 90
+  end: 95
+  year: 2007
+  doi: 10.1109/MCSE.2007.55
