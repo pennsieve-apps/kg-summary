@@ -63,4 +63,3 @@ review:
   inputs:
     graph:
       files: ["tests/fixtures/graph/**"]
-      filePaths: source
