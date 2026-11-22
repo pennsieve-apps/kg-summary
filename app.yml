@@ -8,8 +8,8 @@ application:
     category-predicate-category metagraph, connected components and degree distribution,
     hubs, which ontologies the records use and how much, and data-quality flags (dangling
     edges, duplicate ids, empty names, self-loops, categories that aren't Biolink or
-    Pennsieve, dropped edges). Writes report.md, report.json, CSV tables and a degree
-    histogram.
+    Pennsieve, dropped edges). Writes report.html (a self-contained page), report.md,
+    report.json, CSV tables and a degree histogram.
   type: processor
   tags:
     - knowledge-graph
@@ -50,10 +50,12 @@ inputs:
 outputs:
   - name: report
     description: >-
-      report.md (the summary), report.json (machine-readable), CSV tables
+      report.html (the summary as one self-contained page), report.md (the same in
+      markdown), report.json (machine-readable), CSV tables
       (nodes_by_category, edges_by_predicate, metagraph, degree_by_category, hubs, terms)
       and degree_histogram.png.
     mediaTypes:
+      - text/html
       - text/markdown
       - application/json
       - text/csv

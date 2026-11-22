@@ -16,8 +16,9 @@ required, so KGX graphs from elsewhere work too.
 
 The summary has six sections: size, schema (the category -> predicate -> category
 metagraph), connectivity (weakly connected components, degree distribution), hubs,
-ontology use and data-quality flags. It writes report.json, report.md, a few CSVs with
-the full tables and a degree histogram (PNG) to OUTPUT_DIR, prints the markdown and a
+ontology use and data-quality flags. It writes report.json, report.md, report.html (the
+same as report.md as one self-contained page), a few CSVs with the full tables and a
+degree histogram (PNG) to OUTPUT_DIR, prints the markdown and a
 last line KG_SUMMARY {...} to stdout, and exits 1 when the graph can't be read (the
 report then says why).
 
@@ -28,8 +29,10 @@ made per edge. A graph of 100k nodes and 2.3M edges takes seconds and well under
 
 from __future__ import annotations
 
+import base64
 import csv
 import datetime as dt
+import html
 import json
 import math
 import os
@@ -76,6 +79,7 @@ MAX_NODE_LINE_BYTES = 64 << 20
 # Output files.
 REPORT_JSON = "report.json"
 REPORT_MD = "report.md"
+REPORT_HTML = "report.html"
 HISTOGRAM_PNG = "degree_histogram.png"
 
 
@@ -586,6 +590,7 @@ def write_histogram(path: str, degree: np.ndarray) -> bool:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
 
     top = int(connected.max())
     edges = np.unique(np.round(np.logspace(0, math.log10(top + 1), 30)).astype(np.int64))
@@ -611,6 +616,11 @@ def write_histogram(path: str, degree: np.ndarray) -> bool:
     for side in ("left", "bottom"):
         ax.spines[side].set_color("#c9c8c2")
     ax.tick_params(colors=muted, labelsize=8)
+    # Plain numbers (1, 10, 1,000), not powers of ten.
+    plain = matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}")
+    for axis in (ax.xaxis, ax.yaxis):
+        axis.set_major_formatter(plain)
+        axis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     fig.tight_layout()
     fig.savefig(path, facecolor=surface)
     plt.close(fig)
@@ -623,15 +633,23 @@ MD_ESCAPES = {"\\": "\\\\", "|": "\\|", "[": "\\[", "]": "\\]", "!": "\\!", "`":
               "_": "\\_", "<": "&lt;", ">": "&gt;", "&": "&amp;", "\n": " ", "\r": " "}
 
 
-def md_cell(value) -> str:
-    """A value as markdown text: numbers formatted, text escaped (MD_ESCAPES)."""
-    if value is None:
-        return ""
+def fmt_number(value) -> str | None:
+    """A number as the reports show it (thousands separators, one decimal); None for text."""
     if isinstance(value, float):
         value = round(value, 1)
         return f"{int(value):,}" if value.is_integer() else f"{value:,.1f}"
     if isinstance(value, int):
         return f"{value:,}"
+    return None
+
+
+def md_cell(value) -> str:
+    """A value as markdown text: numbers formatted, text escaped (MD_ESCAPES)."""
+    if value is None:
+        return ""
+    number = fmt_number(value)
+    if number is not None:
+        return number
     return "".join(MD_ESCAPES.get(ch, ch) for ch in str(value))
 
 
@@ -732,6 +750,205 @@ def markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
+# --- report.html -----------------------------------------------------------------------
+#
+# The same content in the same order as report.md, built from the report itself. One
+# self-contained file: inline CSS, a few lines of inline JS (sorting the hub and term
+# tables; the page works without it), the histogram as a data: PNG, and a
+# Content-Security-Policy that lets it load nothing from anywhere else. Every value from
+# the graph goes through esc() (html.escape, quotes included); the JS only moves rows.
+
+HTML_STYLE = """
+:root { color-scheme: light dark; --bg: #fcfcfb; --fg: #0b0b0b; --muted: #52514e; --line: #e4e3df;
+  --head: #f3f2ef; --warn: #8a5a00; --warn-bg: #fdf3dc; --info: #1c5cab; --info-bg: #e6f0fc; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1a1a19; --fg: #f0efec; --muted: #c3c2b7; --line: #383835; --head: #252524;
+    --warn: #f5c66b; --warn-bg: #3a2f17; --info: #9ec5f4; --info-bg: #1d2a3b; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.6rem; margin: 0 0 8px; } h2 { font-size: 1.25rem; margin: 32px 0 8px;
+  padding-top: 8px; border-top: 1px solid var(--line); } h3 { font-size: 1rem; margin: 20px 0 6px; }
+p { margin: 6px 0 12px; } .muted { color: var(--muted); font-size: 0.9rem; }
+code { font: 0.85em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { padding: 6px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { background: var(--head); font-weight: 600; white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th button { all: inherit; cursor: pointer; } th button::after { content: " \\2195"; color: var(--muted); }
+th[aria-sort=ascending] button::after { content: " \\2191"; } th[aria-sort=descending] button::after { content: " \\2193"; }
+.level { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+.level.warning { color: var(--warn); background: var(--warn-bg); } .level.info { color: var(--info); background: var(--info-bg); }
+img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fcfcfb; }
+"""
+
+# Sort a table.sortable by a header's column: numbers by data-v, text by its content.
+# It only reorders existing rows (no markup is made from data).
+HTML_SCRIPT = """
+document.querySelectorAll("table.sortable").forEach(function (table) {
+  table.querySelectorAll("th").forEach(function (th, col) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.textContent = th.textContent;
+    th.textContent = "";
+    th.appendChild(button);
+    button.addEventListener("click", function () {
+      var down = th.getAttribute("aria-sort") !== "descending";
+      table.querySelectorAll("th").forEach(function (h) { h.removeAttribute("aria-sort"); });
+      th.setAttribute("aria-sort", down ? "descending" : "ascending");
+      var body = table.tBodies[0];
+      var rows = Array.prototype.slice.call(body.rows);
+      rows.sort(function (a, b) {
+        var x = a.cells[col], y = b.cells[col], r;
+        if (x.hasAttribute("data-v")) { r = Number(x.getAttribute("data-v")) - Number(y.getAttribute("data-v")); }
+        else { r = x.textContent.localeCompare(y.textContent); }
+        return down ? -r : r;
+      });
+      rows.forEach(function (row) { body.appendChild(row); });
+    });
+  });
+});
+"""
+
+HTML_CSP = ("default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'")
+
+
+def esc(value) -> str:
+    """Text for HTML, in content and attribute values alike."""
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def html_cell(value, tag: str = "td") -> str:
+    """A table cell: numbers right-aligned with their value in data-v (for sorting)."""
+    number = fmt_number(value)
+    if number is not None:
+        return f'<{tag} class="n" data-v="{esc(value)}">{number}</{tag}>'
+    return f"<{tag}>{esc(value)}</{tag}>"
+
+
+NUMERIC = ' class="n"'
+
+
+def html_table(columns: list[tuple[str, str]], table: list[dict], more: str = "", sortable: bool = False) -> str:
+    """A table of at most MD_ROWS rows (as report.md); `more` names where the rest is."""
+    if not table:
+        return "<p>(none)</p>"
+    shown = table[:MD_ROWS]
+    numeric = {key for key, _ in columns if any(fmt_number(r.get(key)) is not None for r in shown)}
+    head = "".join(f'<th{NUMERIC if key in numeric else ""} scope="col">{esc(label)}</th>' for key, label in columns)
+    body = "".join("<tr>" + "".join(html_cell(r.get(key)) for key, _ in columns) + "</tr>" for r in shown)
+    out = (f'<div class="scroll"><table{' class="sortable"' if sortable else ""}>'
+           f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>")
+    if len(table) > MD_ROWS:
+        out += f'<p class="muted">{len(table) - MD_ROWS:,} more' + (f" in {esc(more)}" if more else "") + ".</p>"
+    return out
+
+
+def html_report(report: dict, histogram_png: bytes | None) -> str:
+    """report.html: report.md's content, as a page."""
+    app = report["app"]
+    parts = ["<h1>Knowledge graph summary</h1>"]
+    if app["error"]:
+        parts.append(f"<p><strong>The graph couldn't be read:</strong> {esc(app['error'])}</p>")
+        return html_page(parts)
+    s, sc, c, h, o, q = (report[k] for k in ("size", "schema", "connectivity", "hubs", "ontology", "quality"))
+    g = report.get("graphJson") or {}
+    parts.append(f"<p>Read from the {esc(report['input']['format'])} files in <code>{esc(report['input']['graphDir'])}</code>"
+                 + (f"; graph.json made {esc(g['generatedAt'])}" if g.get("generatedAt") else "") + ". "
+                 "Each node is counted under one category: a record under its model (its pennsieve: "
+                 "category), any other node under its first category.</p>")
+
+    biolink = esc(s["biolink"]) if s["biolink"] else "not stated"
+    if s.get("biolinkVersion"):
+        biolink += f", Biolink {esc(s['biolinkVersion'])}"
+    parts += ["<h2>Size</h2>", '<div class="scroll"><table><tbody>',
+              f"<tr><th scope=\"row\">Nodes</th><td>{s['nodes']:,} ({s['recordNodes']:,} records, "
+              f"{s['termNodes']:,} ontology terms)</td></tr>",
+              f"<tr><th scope=\"row\">Edges</th><td>{s['edges']:,}</td></tr>",
+              f"<tr><th scope=\"row\">Categories / predicates</th><td>{s['categories']:,} / {s['predicates']:,}</td></tr>",
+              f"<tr><th scope=\"row\">Biolink (graph.json)</th><td>{biolink}</td></tr>",
+              "</tbody></table></div>"]
+    parts += ["<h3>Nodes by category</h3>",
+              html_table([("category", "Category"), ("nodes", "Nodes")], s["nodesByCategory"], "nodes_by_category.csv"),
+              "<h3>Edges by predicate</h3>",
+              html_table([("predicate", "Predicate"), ("edges", "Edges")], s["edgesByPredicate"], "edges_by_predicate.csv")]
+
+    parts += ["<h2>Schema</h2>", f"<p>{sc['tripleCount']:,} category → predicate → category combinations.</p>",
+              html_table([("subject_category", "Subject category"), ("predicate", "Predicate"),
+                          ("object_category", "Object category"), ("edges", "Edges")], sc["triples"], "metagraph.csv")]
+
+    d = c["degree"]
+    share = f" ({c['largestComponentShare']:.1%} of nodes)" if c["largestComponentShare"] is not None else ""
+    parts += ["<h2>Connectivity</h2>",
+              f"<p>{c['components']:,} weakly connected components; the largest has {c['largestComponent']:,} nodes{share}, "
+              f"the next {c['secondComponent']:,}. Nodes without edges: {c['isolatedNodes']:,}.</p>",
+              html_table([("label", "Degree"), ("min", "Min"), ("median", "Median"), ("p90", "p90"), ("p99", "p99"),
+                          ("max", "Max"), ("mean", "Mean")], [dict(d, label="All nodes")]),
+              html_table([("category", "Category"), ("nodes", "Nodes"), ("min", "Min"), ("median", "Median"),
+                          ("p90", "p90"), ("p99", "p99"), ("max", "Max"), ("isolated", "Isolated")],
+                         c["degreeByCategory"], "degree_by_category.csv")]
+    if histogram_png:
+        data = base64.b64encode(histogram_png).decode("ascii")
+        parts.append(f'<p><img src="data:image/png;base64,{data}" alt="Degree distribution: nodes by degree, log-log"></p>')
+
+    parts += ["<h2>Hubs</h2>", "<p>The nodes with the most edges.</p>",
+              html_table([("name", "Name"), ("category", "Category"), ("degree", "Degree"), ("in_degree", "In"),
+                          ("out_degree", "Out"), ("id", "Id")], h["top"], "hubs.csv", sortable=True),
+              "<h3>Top hubs per category</h3>"]
+    by_cat: dict[str, list[str]] = {}
+    for r in h["byCategory"]:
+        by_cat.setdefault(r["category"], []).append(f"{esc(r['name'] or r['id'])} ({r['degree']:,})")
+    if by_cat:
+        rows_html = "".join(f"<tr><td>{esc(k)}</td><td>{', '.join(v)}</td></tr>" for k, v in list(by_cat.items())[:MD_ROWS])
+        parts.append('<div class="scroll"><table><thead><tr><th scope="col">Category</th><th scope="col">Hubs (degree)</th>'
+                     f"</tr></thead><tbody>{rows_html}</tbody></table></div>")
+        if len(by_cat) > MD_ROWS:
+            parts.append(f'<p class="muted">{len(by_cat) - MD_ROWS:,} more categories in hubs.csv.</p>')
+    else:
+        parts.append("<p>(none)</p>")
+
+    parts.append("<h2>Ontology use</h2>")
+    if o["recordNodes"]:
+        parts.append(f"<p>{o['recordsLinkedToTerms']:,} of {o['recordNodes']:,} records ({o['recordsLinkedShare']:.1%}) "
+                     f"link to ontology terms through {o['hasAttributeEdges']:,} <code>{esc(HAS_ATTRIBUTE)}</code> edges; "
+                     f"{o['usedTerms']:,} of {o['termNodes']:,} term nodes are used.</p>")
+    parts += ["<h3>Term nodes by prefix</h3>",
+              html_table([("prefix", "Prefix"), ("terms", "Terms"), ("used_terms", "Used"), ("edges", "Edges")],
+                         o["termsByPrefix"]),
+              "<h3>Most-used terms</h3>",
+              html_table([("name", "Name"), ("id", "Term"), ("category", "Category"), ("edges", "Edges"),
+                          ("records", "Records")], o["topTerms"], "terms.csv", sortable=True)]
+    if o["codedProperties"]:
+        parts += ["<h3>Coded properties</h3>",
+                  html_table([("property", "Record property"), ("edges", "Edges")], o["codedProperties"])]
+
+    parts.append("<h2>Data quality</h2>")
+    if not q["flags"]:
+        parts.append("<p>No flags: every check passed.</p>")
+    else:
+        rows_html = "".join(
+            f'<tr><td><span class="level {esc(f["level"])}">{esc(f["level"])}</span></td><td><code>{esc(f["code"])}</code></td>'
+            f'<td class="n">{f["count"]:,}</td><td>{esc(f["message"])}</td>'
+            f'<td>{", ".join(f"<code>{esc(e)}</code>" for e in f["examples"][:3])}</td></tr>'
+            for f in q["flags"])
+        parts.append('<div class="scroll"><table><thead><tr><th scope="col">Level</th><th scope="col">Check</th>'
+                     '<th class="n" scope="col">Count</th><th scope="col">What</th><th scope="col">Examples</th></tr></thead>'
+                     f"<tbody>{rows_html}</tbody></table></div>")
+    return html_page(parts)
+
+
+def html_page(parts: list[str]) -> str:
+    return ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+            f'<meta http-equiv="Content-Security-Policy" content="{HTML_CSP}">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f"<title>Knowledge graph summary</title><style>{HTML_STYLE}</style></head>\n"
+            "<body><main>\n" + "\n".join(parts) + f"\n</main><script>{HTML_SCRIPT}</script></body></html>\n")
+
+
 # --- Main ------------------------------------------------------------------------------
 
 
@@ -818,6 +1035,13 @@ def main() -> int:
             json.dump(report, f, indent=2, default=str)
         with open(os.path.join(out, REPORT_MD), "w", encoding="utf-8") as f:
             f.write(text)
+        histogram = (report.get("outputs") or {}).get("histogram")
+        png = None
+        if histogram:
+            with open(os.path.join(out, histogram), "rb") as f:
+                png = f.read()
+        with open(os.path.join(out, REPORT_HTML), "w", encoding="utf-8") as f:
+            f.write(html_report(report, png))
         log(f"wrote the report to {out}")
     else:
         log("OUTPUT_DIR is not set; the report is in the log only")

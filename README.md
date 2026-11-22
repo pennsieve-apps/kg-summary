@@ -5,7 +5,8 @@ records and the ontology terms they use, as a [KGX](https://github.com/biolink/k
 graph (Knowledge Graph Exchange, with [Biolink Model](https://biolink.github.io/biolink-model/)
 categories and predicates where they are known). It reports how big the graph is, how its
 categories connect, how well connected it is, its hubs, which ontologies the records use,
-and data-quality problems, as a short readable report with tables and a degree histogram.
+and data-quality problems, as a short readable report (a web page and markdown) with
+tables and a degree histogram.
 It is built by Pennsieve on open-source libraries: [DuckDB](https://duckdb.org) reads and
 aggregates the graph files, [SciPy](https://scipy.org) and [NumPy](https://numpy.org)
 compute connected components and degrees, [Apache Arrow](https://arrow.apache.org) moves
@@ -82,6 +83,12 @@ some graphs.
 
 All in `OUTPUT_DIR` (the `report` output):
 
+- **`report.html`**: the summary as one self-contained page: the same content and order
+  as `report.md`, with the histogram embedded, the hub and term tables sortable by their
+  headers, light and dark themes, and tables that scroll sideways on a phone. It loads
+  nothing from anywhere (its Content-Security-Policy allows only its inline style and
+  script and data: images), so it works opened from disk; text from the graph is
+  HTML-escaped.
 - **`report.md`**: the summary, with short tables (15 rows; the CSVs have the rest).
   Also printed to the log. Text from the graph is escaped (markdown punctuation with a
   backslash, `<` `>` `&` as entities), so names can't add links, images or HTML.
@@ -121,8 +128,8 @@ nodes, 2,295,061 edges, hubs of up to ~25,000 edges), in the image, at 1 vCPU / 
 
 | Input | Time | Peak memory (cgroup) |
 |---|---|---|
-| Parquet (98 MB) | 1.7-1.9 s | 790-830 MiB |
-| TSV, gzipped (80 MB) | 3 s | 500 MiB |
+| Parquet (98 MB) | 1.7-2.0 s | 790-830 MiB |
+| TSV, gzipped (80 MB) | 3-3.5 s | 490-560 MiB |
 
 It also runs in 1 GiB; 2 GiB leaves room for graphs a few times larger.
 

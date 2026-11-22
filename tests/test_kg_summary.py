@@ -236,6 +236,18 @@ def test_main(tmp_path):
     for heading in ("## Size", "## Schema", "## Connectivity", "## Hubs", "## Ontology use", "## Data quality"):
         assert heading in md
     assert "| warning | dangling-edge | 1 |" in md
+    page = (out / "report.html").read_text()
+    # The same sections, in the same order, as report.md.
+    positions = [page.index(f"<h2>{h}</h2>") for h in ("Size", "Schema", "Connectivity", "Hubs", "Ontology use",
+                                                       "Data quality")]
+    assert positions == sorted(positions)
+    assert page.count('<img src="data:image/png;base64,') == 1
+    assert page.count('class="sortable"') == 2
+    assert "brain slice 1" in page and "dangling-edge" in page
+    # Nothing is loaded from elsewhere: no src or href but the data: image, no URLs at all.
+    assert [u[:22] for u in re.findall(r'(?:src|href)="([^"]*)"', page)] == ["data:image/png;base64,"]
+    assert not re.search(r"https?://", page)
+    assert "default-src 'none'" in page
 
 
 def test_main_without_graph(tmp_path):
@@ -243,6 +255,8 @@ def test_main_without_graph(tmp_path):
     result, summary, report, _ = run_main(tmp_path, tmp_path / "input")
     assert result.returncode == 1 and summary["exitCode"] == 1
     assert "no graph input" in report["app"]["error"]
+    page = (tmp_path / "output" / "report.html").read_text()
+    assert "couldn't be read" in page and "no graph input" in page and "<img" not in page
 
 
 def write_graph(tmp_path, nodes, edges, graph_json=None):
@@ -348,3 +362,30 @@ def test_many_parallel_edges_still_connect(tmp_path):
     graph = write_graph(tmp_path, "id\tcategory\tname\nA:1\tbiolink:Gene\ta\nA:2\tbiolink:Gene\tb\n", edges)
     c = summarize(graph, tmp_path / "out")["connectivity"]
     assert (c["components"], c["largestComponent"], c["degree"]["max"]) == (1, 2, 256)
+
+
+HTML_ATTACKS = ["<script>alert(1)</script>", '" onmouseover="alert(1)', "<a href=\"javascript:alert(1)\">x</a>",
+                "</style><b>x</b>", "' onfocus='alert(1)"]
+
+
+def test_html_is_inert(tmp_path):
+    names = "".join(f"A:{i}\tbiolink:Gene\t{attack}\n" for i, attack in enumerate(HTML_ATTACKS))
+    graph = write_graph(tmp_path, "id\tcategory\tname\n" + names + f"B:1\t{HTML_ATTACKS[0]}\tb\n",
+                        "subject\tpredicate\tobject\n" + "".join(f"A:{i}\t{HTML_ATTACKS[1]}\tB:1\n"
+                                                                    for i in range(len(HTML_ATTACKS))),
+                        json.dumps({"generated_at": HTML_ATTACKS[2], "biolink": HTML_ATTACKS[3]}))
+    r = summarize(graph, tmp_path / "out")
+    page = kg_summary.html_report(dict(r, app={"error": None}), None)
+    assert page.count("<script") == 1 and page.count("</style>") == 1  # the page's own
+    for raw in ("<script>alert", '" onmouseover=', "' onfocus=", "<a ", 'href="', "<b>"):
+        assert raw not in page, raw
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    assert "&quot; onmouseover=&quot;alert(1)" in page and "&#x27; onfocus=&#x27;" in page
+    # The sort script never parses markup.
+    assert "innerHTML" not in kg_summary.HTML_SCRIPT and "outerHTML" not in kg_summary.HTML_SCRIPT
+
+
+def test_html_without_histogram(tmp_path):
+    graph = write_graph(tmp_path, "id\tcategory\tname\nA:1\tbiolink:Gene\ta\n", "subject\tpredicate\tobject\n")
+    page = kg_summary.html_report(dict(summarize(graph, tmp_path / "out"), app={"error": None}), None)
+    assert "<img" not in page and "<h2>Data quality</h2>" in page
